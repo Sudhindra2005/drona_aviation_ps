@@ -58,6 +58,25 @@
 
 #define LASER_ALT 1 // FORCE ENABLE
 
+// =================================================================
+//  INDUSTRY STANDARD FUSION SETTINGS
+// =================================================================
+#define GATE_THRESHOLD_CM   40.0f  // Reject jumps larger than this (Table protection)
+#define GATE_TIMEOUT_LOOPS  20     // If glitch persists 200ms, accept it
+#define MIX_FACTOR          0.10f  // 10% Measurement, 90% Prediction (Smoothness)
+#define BARO_TRUST_ZONE     250.0f // Above this, switch to Baro
+#define TOF_REENGAGE_ZONE   200.0f // Below this, switch back to ToF
+
+// Internal State Variables (Preserves history between loops)
+static float fused_alt_state = 0.0f;
+static float prev_baro_alt = 0.0f;
+static int   outlier_counter = 0;
+static bool  using_baro_mode = false;
+
+// Shared Globals (Ensure these are defined at top of file)
+extern float baro_ground_offset;
+extern bool is_offset_init;
+
 // --- CHANGE 2: Use the Global Instance (DO NOT Create a new one) ---
 extern LaserSensor_L1 XVision;
 
@@ -167,6 +186,7 @@ float _position_z = 0.0f;
 float accel_ef_z = 0.0f;
 
 int32_t MyEstAlt = 0;    
+int32_t EstAlt = 0;
 // temp vr
 
 float _time_constant_z1 = 2.0f;
@@ -616,79 +636,138 @@ void apmCalculateEstimatedAltitude ( uint32_t currentTime ) {
 
 #ifdef LASER_ALT
 void checkReading() {
-    // Debug Heartbeat
-    debug_checkReading_count++; 
+    debug_checkReading_count++; // debug heartbeat
 
-    uint32_t baro_update_time = getBaroLastUpdate();
-    float dt = 0.01f; // Assumed 100Hz loop
+    // -------------------------------------------------------------
+    // 1. SENSOR ACQUISITION
+    // -------------------------------------------------------------
+    
+    // A. Barometer: Calculate Vertical Trend (Velocity)
+    // We use the barometer's *change* to predict movement, reducing latency.
+    float baro_trend = 0.0f;
+    uint32_t baro_now = getBaroLastUpdate();
 
-    // 1. Always Update Barometer (We need it for the offset calculation)
-    if (baro_update_time != baro_last_update) {
-        dt = (float)(baro_update_time - baro_last_update) * 0.001f;
-        Baro_Height = baroCalculateAltitude();
-        baro_last_update = baro_update_time;
+    if (baro_now != baro_last_update) {
+        float new_baro = baroCalculateAltitude();
+        
+        // Simple LPF on Baro to kill wind noise
+        Baro_Height = (Baro_Height * 0.7f) + (new_baro * 0.3f);
+        
+        // Trend = How much did we move since last frame?
+        baro_trend = Baro_Height - prev_baro_alt;
+        prev_baro_alt = Baro_Height;
+        baro_last_update = baro_now;
     }
 
-    // 2. Read ToF
-    bool isTofReady = XVision.startRanging();
+    // B. ToF Sensor
+    bool isDataReady = XVision.startRanging();
     int16_t range_mm = XVision.getLaserRange();
-    debug_last_raw_mm = range_mm; // For PlutoPilot
+    debug_last_raw_mm = range_mm;
 
-    // 3. LOGIC DECISION
-    bool valid_tof = (isTofReady && range_mm > 0 && range_mm < 2500); // 2.5m limit
+    // -------------------------------------------------------------
+    // 2. PREDICTION STEP (Feedforward)
+    // -------------------------------------------------------------
+    // "I predict I am where I was last time + however much the barometer moved."
+    // This makes the drone feel responsive even if the laser average is slow.
+    float predicted_alt = fused_alt_state + baro_trend;
 
+    // -------------------------------------------------------------
+    // 3. CORRECTION STEP (Measurement Fusion)
+    // -------------------------------------------------------------
+    bool valid_tof = (isDataReady && range_mm > 10 && range_mm < 3500);
+    float measurement = predicted_alt; // Default to prediction if no valid sensor
+        
     if (valid_tof) {
-        // --- ZONE A: NEAR GROUND (Trust ToF) ---
+        float raw_tof_cm = (float)range_mm / 10.0f;
         
-        ToF_Height = (float)range_mm / 10.0f; // mm to cm
-        
-        // Tilt Compensation
+        // Tilt Compensation (Critical for accuracy)
         float tilt = degreesToRadians(calculateTiltAngle(&inclination) / 10);
-        if (tilt < 0.43f) ToF_Height *= cos_approx(tilt);
+        if (tilt < 0.43f) raw_tof_cm *= cos_approx(tilt);
 
-        // --- DYNAMIC OFFSET CORRECTION ---
-        // Calculate what the offset IS right now
-        float current_offset = Baro_Height - ToF_Height;
+        // --- INNOVATION GATE (The "Table" Filter) ---
+        // Innovation = Difference between what we predicted and what we saw.
+        float innovation = raw_tof_cm - predicted_alt;
 
-        if (!is_offset_init) {
-            // First run: Snap immediately
-            baro_ground_offset = current_offset;
-            is_offset_init = true;
-        } else {
-            // "Table Protection": Only update offset if the change is smooth.
-            // If offset jumps drastically (>50cm), we flew over a table/hole.
-            // Don't learn the table height into the offset!
-            if (abs(current_offset - baro_ground_offset) < 50.0f) {
-                // Smoothly update the offset to account for weather drift
-                baro_ground_offset = (baro_ground_offset * (1.0f - offset_alpha)) + (current_offset * offset_alpha);
+        // If the jump is HUGE (>40cm) but Baro didn't see it (trend is small),
+        // it implies the ground moved (table), not the drone.
+        if (abs(innovation) > GATE_THRESHOLD_CM && abs(baro_trend) < 5.0f) {
+            outlier_counter++;
+            
+            if (outlier_counter < GATE_TIMEOUT_LOOPS) {
+                // REJECT: Trust the prediction (Baro trend), ignore the laser jump
+                measurement = predicted_alt; 
+            } else {
+                // ACCEPT: The "glitch" persisted (we really landed on the table)
+                // Snap to the new reality.
+                measurement = raw_tof_cm;
+                outlier_counter = 0;
             }
+        } else {
+            // NORMAL: Valid data within physics limits
+            measurement = raw_tof_cm;
+            outlier_counter = 0;
         }
 
-        // FORCE THE STATE (Fixes the "Zero" bug)
-        // We tell the estimator: "I know exactly where I am."
-        setAltitude(ToF_Height);
-        last_valid_tof = ToF_Height;
+        // --- HYSTERESIS SWITCHING ---
+        // Prevent flickering between sensors at the boundary
+        if (measurement < TOF_REENGAGE_ZONE) using_baro_mode = false;
+        if (measurement > BARO_TRUST_ZONE)   using_baro_mode = true;
 
     } else {
-        // --- ZONE C: HIGH ALTITUDE (Trust Baro + Offset) ---
-        
-        if (is_offset_init) {
-            // We are blind (no laser), but we know where the ground WAS relative to the barometer.
-            float virtual_height = Baro_Height - baro_ground_offset;
-            
-            // Soft Handover: If virtual height is very different from last known ToF, 
-            // maybe apply a filter, but generally we trust the calibrated baro.
-            setAltitude(virtual_height);
-        } else {
-            // We took off without laser? Fallback to raw baro logic
-            correctedWithBaro(Baro_Height, dt);
-        }
+        // No ToF data available -> Force Baro Mode
+        if (fused_alt_state > BARO_TRUST_ZONE) using_baro_mode = true;
     }
+
+    // -------------------------------------------------------------
+    // 4. UPDATE STATE (The "Mix")
+    // -------------------------------------------------------------
     
-    // NEW (Correct):
-    // We take the internal float position (which setAltitude just updated)
-    // and cast it to the global integer variable the rest of the system uses.
-    MyEstAlt = (int32_t)_position_z;
+    if (!using_baro_mode && valid_tof) {
+        // --- ZONE A: TOF FUSION ---
+        
+        // Dynamic Offset Learning (The Fix for your issue)
+        // We constantly re-learn the offset while the laser is trusted.
+        // This ensures the Baro stays aligned with the Laser reality.
+        if (!is_offset_init) {
+            baro_ground_offset = Baro_Height - measurement;
+            fused_alt_state = measurement; // Hard Snap
+            is_offset_init = true;
+        } else {
+            float current_offset = Baro_Height - measurement;
+            // Only learn offset if we aren't currently rejecting outliers
+            if (outlier_counter == 0) {
+                // Slow adaptation (0.5%) to drift with weather
+                baro_ground_offset = (baro_ground_offset * 0.995f) + (current_offset * 0.005f);
+            }
+        }
+    
+        // COMPLEMENTARY FILTER
+        // New = (Prediction * 0.90) + (Measurement * 0.10)
+        // Since 'predicted_alt' already includes Baro Trend, this effectively fuses both!
+        fused_alt_state = (predicted_alt * (1.0f - MIX_FACTOR)) + (measurement * MIX_FACTOR);
+
+    } else {
+        // --- ZONE B: BARO ONLY ---
+        
+        // Use the learned offset to create a virtual altitude
+        float virtual_baro_alt = Baro_Height - baro_ground_offset;
+        
+        // Blend it smoothly with previous state to avoid jumps
+        // Trust prediction (history) heavily, nudge with Baro
+        fused_alt_state = (predicted_alt * 0.95f) + (virtual_baro_alt * 0.05f);
+    }
+
+    // -------------------------------------------------------------
+    // 5. FINAL OUTPUT
+    // -------------------------------------------------------------
+    
+    // Force the internal integrator to match our high-quality fusion
+    setAltitude(fused_alt_state);
+    
+    // Update global for display/PID
+    // (Using MyEstAlt per your custom variable name)
+    MyEstAlt = (int32_t)fused_alt_state;
+    EstAlt = MyEstAlt; // Keep legacy variable updated too, just in case
 }
 #endif
 

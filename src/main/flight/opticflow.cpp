@@ -98,12 +98,19 @@
 #define SENSORFLOW_LPS 0.05
 
 extern LaserSensor_L1 XVision;  
+extern int32_t MyEstAlt;
 extern int16_t gyroADC[XYZ_AXIS_COUNT];
 
 // Global Variables for Flow Logic
 uint32_t last_opticflow_update_ms;
 float flowRate[2];
 float bodyRate[2];
+
+// --- ADD THESE GLOBALS ---
+float flow_vel_x_est = 0.0f; // Measured velocity in cm/s
+float flow_vel_y_est = 0.0f;
+bool flow_is_valid = false;
+bool flow_data_is_new = false; // <--- ADD THIS HANDSHAKE FLAG
 
 // minimum assumed height
 const float height_min = 0.1;
@@ -334,8 +341,10 @@ void updateHeightEstimate(uint32_t currentTime)
 
 void calculateSensorFlow(uint32_t currentTime)
 {
-    float laser_mm = XVision.getLaserRange();
-    float laser_cm = laser_mm / 10.0f;
+    // float laser_mm = XVision.getLaserRange();
+    // float laser_cm = laser_mm / 10.0f;
+
+    int32_t fused_alt_cm = MyEstAlt;
 
     static uint32_t previousTime;
     float dt = (currentTime - previousTime) / 1000000.0f;
@@ -344,7 +353,7 @@ void calculateSensorFlow(uint32_t currentTime)
 
     // 1. Get your new Stable Altitude (convert cm -> meters)
     // We clamp it to 5cm minimum to avoid divide-by-zero explosions on the ground
-    float altitude_m = (float)constrain(laser_cm, 5, 200) / 100.0f;
+    float altitude_m = (float)constrain(fused_alt_cm, 5, 200) / 100.0f;
 
     // 2. Read Raw Flow (Burst Mode)
     PAW3903_Data flowData;
@@ -410,16 +419,22 @@ void calculateSensorFlow(uint32_t currentTime)
         float velX_mps = (flowX_clean * altitude_m * FLOW_SCALER) / dt;
         float velY_mps = (flowY_clean * altitude_m * FLOW_SCALER) / dt;
 
-        // 6. Push to Global State (for Position Controller)
-        if (ARMING_FLAG(ARMED)) {
-            // Apply Low Pass Filter
-            filtered_raw_flow[0] = (filtered_raw_flow[0] * 0.8f) + (velX_mps * 0.2f);
-            filtered_raw_flow[1] = (filtered_raw_flow[1] * 0.8f) + (velY_mps * 0.2f);
+        // 6. Export Measurement (Don't integrate position here!)
+        if (ARMING_FLAG(ARMED) && flowData.squal > 25) {
+            // Low Pass Filter the raw measurement
+            filtered_raw_flow[0] = (filtered_raw_flow[0] * 0.7f) + (velX_mps * 0.3f);
+            filtered_raw_flow[1] = (filtered_raw_flow[1] * 0.7f) + (velY_mps * 0.3f);
             
-            VelocityX = filtered_raw_flow[0] * 100.0f; // m/s to cm/s
-            VelocityY = filtered_raw_flow[1] * 100.0f;
+            // Export to Global (Convert m/s to cm/s for posEstimate)
+            flow_vel_x_est = filtered_raw_flow[0] * 100.0f; 
+            flow_vel_y_est = filtered_raw_flow[1] * 100.0f;
+            flow_is_valid = true;
+            flow_data_is_new = true; // <--- SIGNAL NEW DATA
         } else {
-            VelocityX = 0; VelocityY = 0;
+            flow_is_valid = false;
+            flow_vel_x_est = 0;
+            flow_vel_y_est = 0;
+            flow_data_is_new = false;
         }
     }
 }

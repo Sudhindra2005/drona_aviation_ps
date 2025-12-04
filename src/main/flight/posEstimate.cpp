@@ -51,6 +51,11 @@
 #define MILLI_SEC 1000
 #define SEC 1000000
 
+extern float flow_vel_x_est;
+extern float flow_vel_y_est;
+extern bool flow_is_valid;
+extern bool flow_data_is_new; // <--- Import the flag
+
 static pidProfile_t *pidProfile; //PS2
 
 int16_t print_posvariable1 = 0;
@@ -254,52 +259,70 @@ void PosXYEstimate(uint32_t currentTime)
 		}
 
 
-    for (i = 0; i < 2; i++) {
+        for (i = 0; i < 2; i++) {
+        
+        // ==========================================================
+        // STEP 1: PREDICTION (The High Frequency IMU Update)
+        // This runs EVERY loop cycle to keep position smooth.
+        // ==========================================================
+        
+        // A. Get Acceleration (cm/s^2)
         if (accSumCountXYZ) {
-            accel_EF_prev[i] = accel_EF[i];
-            accel_EF[i] = (float) accSum[i] / (float) accSumCountXYZ;
+            accel_EF[i] = ((float)accSum[i] / (float)accSumCountXYZ) * accVelScale;
+            accel_EF[i] = constrainf(accel_EF[i], -800, 800);
         } else {
-        	accel_EF[i] = 0;
+            accel_EF[i] = 0;
         }
 
-        accel_EF[i] = accel_EF[i] * accVelScale;
-        accel_EF[i] = constrainf(accel_EF[i], -800, 800);
+        // B. Integrate Accel -> Velocity (Prediction)
+        // V_new = V_old + (a * dt)
+        velocity_increase[i] = accel_EF[i] * dt;
+        est_velocity[i] += velocity_increase[i]; 
 
+        // ==========================================================
+        // STEP 2: CORRECTION (The Low Frequency Flow Update)
+        // This runs ONLY when the camera has a new frame.
+        // ==========================================================
+        
+        if (flow_is_valid && flow_data_is_new) {
+            
+            // Get the FRESH measurement
+            float measured_vel = (i == 0) ? flow_vel_x_est : flow_vel_y_est;
+            
+            // Calculate Error: Measured - Predicted
+            float vel_error = measured_vel - est_velocity[i];
 
+            // Apply Correction (Gain)
+            // Since this only runs ~30-50 times a second (vs 100-200 IMU loops),
+            // We can afford a higher gain here because we don't repeat it.
+            // Try 0.3 to 0.5 (Trust the camera 30-50% when a frame arrives)
+            float K_FLOW_CORRECTION = 0.3f; 
+            
+            est_velocity[i] += vel_error * K_FLOW_CORRECTION;
+            
+        } else if (!flow_is_valid) {
+            // If flow is invalid (dark/too high), apply drag to stop drift
+            est_velocity[i] *= 0.98f; 
+        }
 
-        if (i == 1)
-            imuResetAccelerationSum(0);
-
-        accel_EF_correction[i] += position_error[i] * k3 * dt;
-        est_velocity[i] += position_error[i] * k2 * dt;
-        position_correction[i] += position_error[i] * k1 * dt;
-
-        //Estimation
-        accel_EF[i] += accel_EF_correction[i];
-        velocity_increase[i] = (accel_EF[i]) * dt; // acc * dt
-        position_base[i] += (est_velocity[i] + velocity_increase[i] * 0.5f)
-                * dt; //S = S0 + u + (1/2) at^2
-
-        //Updated pos and vel
-        est_position[i] = position_base[i] + position_correction[i];
-        est_velocity[i] += velocity_increase[i]; //v = u + at
+        // ==========================================================
+        // STEP 3: POSITION UPDATE (High Frequency)
+        // Runs EVERY loop to ensure smooth flight control.
+        // ==========================================================
+        
+        // P_new = P_old + (V * dt)
+        est_position[i] += est_velocity[i] * dt;
     }
 
-
-
-    // store 3rd order estimate (i.e. horizontal position) for future use at 10hz
-    hist_xy_counter++;
-    if (hist_xy_counter >= INTERTIALNAV_SAVE_POS_AFTER_ITERATIONS) {
-
-        hist_xy_counter = 0;
-        addHistPositionBaseEstXY(position_base[0], position_base[1]);
-
+    // Handshake: We have consumed the data, don't use it again until updated.
+    if (flow_data_is_new) {
+        flow_data_is_new = false; 
     }
 
-    PositionX = (int16_t) est_position[0];
-    PositionY = (int16_t) est_position[1];
     VelocityX = (int16_t) est_velocity[0];
     VelocityY = (int16_t) est_velocity[1];
+    PositionX = (int16_t) est_position[0];
+    PositionY = (int16_t) est_position[1];
 
 }
 
