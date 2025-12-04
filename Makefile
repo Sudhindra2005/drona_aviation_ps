@@ -270,9 +270,9 @@ DRONA_FLIGHT = 	flight/acrobats.cpp \
             		flight/posEstimate.cpp \
             		flight/opticflow.cpp \
 
-DRONA_DRIVERS = drivers/opticflow_paw3903.cpp \
-								drivers/paw3903_opticflow.cpp \
-								drivers/display_ug2864hsweg01 \
+#drivers/opticflow_paw3903.cpp
+DRONA_DRIVERS =  	drivers/paw3903_opticflow.cpp \
+					drivers/display_ug2864hsweg01 \
             		drivers/ranging_vl53l0x.cpp \
             		drivers/ranging_vl53l1x.cpp \
             		drivers/sc18is602b.cpp \

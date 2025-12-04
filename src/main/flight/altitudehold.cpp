@@ -149,14 +149,24 @@ float _k2_z;    // gain for vertical velocity correction
 float _k3_z;    // gain for vertical accelerometer offset correction
 
 // general variables
-float _position_base_z;          // (uncorrected) position estimate in cm - relative to the home location (_base_lat, _base_lon, 0)
-float _position_correction_z;    // sum of corrections to _position_base from delayed 1st order samples in cm
-float _accel_correction_hbf_z;
-float _velocity_z;          // latest velocity estimate (integrated from accelerometer values) in cm/s
-float _position_error_z;    // current position error in cm - is set by the check_* methods and used by update method to calculate the correction terms
-float _position_z;          // sum(_position_base, _position_correction) - corrected position estimate in cm - relative to the home location (_base_lat, _base_lon, 0)
-float accel_ef_z;
+// float _position_base_z;          // (uncorrected) position estimate in cm - relative to the home location (_base_lat, _base_lon, 0)
+// float _position_correction_z;    // sum of corrections to _position_base from delayed 1st order samples in cm
+// float _accel_correction_hbf_z;
+// float _velocity_z;          // latest velocity estimate (integrated from accelerometer values) in cm/s
+// float _position_error_z;    // current position error in cm - is set by the check_* methods and used by update method to calculate the correction terms
+// float _position_z;          // sum(_position_base, _position_correction) - corrected position estimate in cm - relative to the home location (_base_lat, _base_lon, 0)
+// float accel_ef_z;
 
+// Explicitly initialize to 0.0f
+float _position_base_z = 0.0f;
+float _position_correction_z = 0.0f;
+float _accel_correction_hbf_z = 0.0f;
+float _velocity_z = 0.0f;
+float _position_error_z = 0.0f;
+float _position_z = 0.0f;
+float accel_ef_z = 0.0f;
+
+int32_t MyEstAlt = 0;    
 // temp vr
 
 float _time_constant_z1 = 2.0f;
@@ -197,6 +207,15 @@ int32_t altholdDebug8         = 0;
 int32_t altholdDebug9         = 0;
 int32_t velControlDebug [ 3 ] = { 0 };
 
+// --- ADD THESE GLOBALS AT THE TOP OF altitudehold.cpp ---
+float baro_ground_offset = 0.0f;
+bool is_offset_init = false;
+float last_valid_tof = 0.0f;
+
+// Tune this: 0.05 means we trust the new offset 5% every frame (fast adaptation)
+// Use 0.01 for slower adaptation (better for ignoring tables)
+float offset_alpha = 0.05f;
+
 void configureAltitudeHold ( pidProfile_t *initialPidProfile, barometerConfig_t *intialBarometerConfig, rcControlsConfig_t *initialRcControlsConfig, escAndServoConfig_t *initialEscAndServoConfig ) {
   pidProfile          = initialPidProfile;
   barometerConfig     = intialBarometerConfig;
@@ -215,7 +234,7 @@ int16_t initialThrottleHold_test;
 int16_t debug_e1;
 
 static int16_t initialThrottleHold;
-int32_t EstAlt = 0;    // in cm
+// in cm
 
   #define BARO_UPDATE_FREQUENCY_40HZ ( 1000 * 25 )
   #define UPDATE_FREQUENCY           ( 1000 * 10 )    // 100Hz
@@ -233,7 +252,7 @@ static void applyMultirotorAltHold ( void ) {
       rcCommand [ THROTTLE ] = throttle_history + constrain ( ( rcData [ THROTTLE ] - initialThrottleHold ) / sensitivity_inv, -50, 80 );
     } else {
       if ( isAltHoldChanged ) {
-        AltHold          = EstAlt;
+        AltHold          = MyEstAlt;
         isAltHoldChanged = 0;
       }
       rcCommand [ THROTTLE ] = constrain ( initialThrottleHold + altHoldThrottleAdjustment, escAndServoConfig->minthrottle, escAndServoConfig->maxthrottle );
@@ -249,7 +268,7 @@ static void applyMultirotorAltHold ( void ) {
       velocityControl = 0;
       setVelocity     = 0;
       if ( isAltHoldChanged ) {
-        AltHold          = EstAlt;
+        AltHold          = MyEstAlt;
         isAltHoldChanged = 0;
       }
     }
@@ -290,7 +309,7 @@ void updateAltHoldState ( void ) {
   if ( ! FLIGHT_MODE ( BARO_MODE ) ) {
     ENABLE_FLIGHT_MODE ( BARO_MODE );
     // baroResetGroundLevel(); // Reset ground level for barometer
-    AltHold                   = EstAlt;
+    AltHold                   = MyEstAlt;
     initialThrottleHold       = 1500;
     errorVelocityI            = 0;
     altHoldThrottleAdjustment = 0;
@@ -307,7 +326,7 @@ void updateSonarAltHoldState ( void ) {
 
   if ( ! FLIGHT_MODE ( SONAR_MODE ) ) {
     ENABLE_FLIGHT_MODE ( SONAR_MODE );
-    AltHold                   = EstAlt;
+    AltHold                   = MyEstAlt;
     initialThrottleHold       = rcData [ THROTTLE ];
     errorVelocityI            = 0;
     altHoldThrottleAdjustment = 0;
@@ -332,11 +351,11 @@ int32_t calculateAltHoldThrottleAdjustment ( int32_t velocity_z, float accZ_tmp,
   }
 
   if ( ! ARMING_FLAG ( ARMED ) ) {
-    AltHold = EstAlt;
+    AltHold = MyEstAlt;
   }
 
   if ( ! velocityControl ) {
-    error           = constrain ( AltHold - EstAlt, -500, 500 );
+    error           = constrain ( AltHold - MyEstAlt, -500, 500 );
     error           = applyDeadband ( error, 5 );
     calculatedError = error;
     altholdDebug8   = error;
@@ -452,11 +471,11 @@ void calculateEstimatedAltitude ( uint32_t currentTime ) {
   }
   #endif
 
-  if ( sonarAlt > 0 && sonarAlt < 200 ) {
-    EstAlt = BaroAlt;
-  } else {
-    EstAlt = accAlt;
-  }
+  // if ( sonarAlt > 0 && sonarAlt < 200 ) {
+  //   EstAlt = BaroAlt;
+  // } else {
+  //   EstAlt = accAlt;
+  // }
 
   baroVel     = ( BaroAlt - lastBaroAlt ) * 1000000.0f / dTime;
   lastBaroAlt = BaroAlt;
@@ -471,7 +490,7 @@ void calculateEstimatedAltitude ( uint32_t currentTime ) {
 
   // Update Kalman filters with new sensor readings
   float filteredVel = kalmanFilterUpdate ( &velHoldFilter, vel_tmp );
-  float filteredAlt = kalmanFilterUpdate ( &altHoldFilter, EstAlt );
+  //float filteredAlt = kalmanFilterUpdate ( &altHoldFilter, EstAlt );
 
   altHoldThrottleAdjustment = calculateAltHoldThrottleAdjustment ( vel_tmp, accZ_tmp, accZ_old );
 
@@ -480,7 +499,7 @@ void calculateEstimatedAltitude ( uint32_t currentTime ) {
   accZ_old                     = accZ_tmp;
 
   // Update global variables with filtered values
-  EstAlt = filteredAlt;
+  //EstAlt = filteredAlt;
   vel    = filteredVel;
   // altest=EstAlt;
 }
@@ -540,13 +559,14 @@ void apmCalculateEstimatedAltitude ( uint32_t currentTime ) {
     imuResetAccelerationSum ( 1 );
   }
 
-  if ( AltRstRequired && ! ARMING_FLAG ( ARMED ) )
-    AltRst ( );
+  // if ( AltRstRequired && ! ARMING_FLAG ( ARMED ) )
+  //   AltRst ( );
 
   #if defined( BARO ) && ! ( defined( LASER_ALT ) )
   checkBaro ( );
   #else
   checkReading ( );
+  return;
   #endif
 
   if ( accSumCount > 0 ) {
@@ -575,17 +595,17 @@ void apmCalculateEstimatedAltitude ( uint32_t currentTime ) {
   _velocity_z += velocity_increase_z;
 
   VelocityZ = lrintf ( _velocity_z );
-  EstAlt    = lrintf ( _position_z );
+  // EstAlt    = lrintf ( _position_z );
 
   addHistPositionBaseEstZ ( _position_base_z );
 
   // Apply Kalman filtering to APM estimates
   float filteredVelocityZ = kalmanFilterUpdate ( &velHoldFilter, VelocityZ );
-  float filteredEstAlt    = kalmanFilterUpdate ( &altHoldFilter, EstAlt );
+  float filteredEstAlt    = kalmanFilterUpdate ( &altHoldFilter, MyEstAlt );
 
   // Update global variables with filtered values
   VelocityZ = lrintf ( filteredVelocityZ );
-  EstAlt    = lrintf ( filteredEstAlt );
+  // EstAlt    = lrintf ( filteredEstAlt );
 
   altHoldThrottleAdjustment = calculateAltHoldThrottleAdjustment ( VelocityZ, accZ_tmp, accZ_old );
   accZ_old                  = accZ_tmp;
@@ -596,81 +616,79 @@ void apmCalculateEstimatedAltitude ( uint32_t currentTime ) {
 
 #ifdef LASER_ALT
 void checkReading() {
-    
-    // --- DEBUG HEARTBEAT ---
-    // Prove that the scheduler is actually calling this function.
-    // If this number doesn't go up in PlutoPilot, the #ifdef LASER_ALT is failing.
+    // Debug Heartbeat
     debug_checkReading_count++; 
 
-    uint32_t baro_update_time;
-    float dt;
-    float tilt = 0;
-    static int32_t baro_offset = 0;
+    uint32_t baro_update_time = getBaroLastUpdate();
+    float dt = 0.01f; // Assumed 100Hz loop
 
-    // ---------------------------------------------------------
-    // 1. Process Barometer (Standard Logic)
-    // ---------------------------------------------------------
-    baro_update_time = getBaroLastUpdate();
+    // 1. Always Update Barometer (We need it for the offset calculation)
     if (baro_update_time != baro_last_update) {
         dt = (float)(baro_update_time - baro_last_update) * 0.001f;
         Baro_Height = baroCalculateAltitude();
-        
-        // Simple Low Pass Filter on Baro
-        filtered = (0.75f * filtered) + ((1 - 0.75f) * Baro_Height);
         baro_last_update = baro_update_time;
     }
 
-    // ---------------------------------------------------------
-    // 2. Process VL53L1X Laser Sensor (with Debugging)
-    // ---------------------------------------------------------
-    
-    // Capture the boolean result to see if the driver thinks data is ready
-    bool isDataReady = XVision.startRanging();
-    debug_startRanging_result = isDataReady ? 1 : 0;
+    // 2. Read ToF
+    bool isTofReady = XVision.startRanging();
+    int16_t range_mm = XVision.getLaserRange();
+    debug_last_raw_mm = range_mm; // For PlutoPilot
 
-    if (isDataReady) {
+    // 3. LOGIC DECISION
+    bool valid_tof = (isTofReady && range_mm > 0 && range_mm < 2500); // 2.5m limit
+
+    if (valid_tof) {
+        // --- ZONE A: NEAR GROUND (Trust ToF) ---
         
-        // Fetch raw range
-        int16_t range_mm = XVision.getLaserRange();
+        ToF_Height = (float)range_mm / 10.0f; // mm to cm
         
-        // --- DEBUG DATA CAPTURE ---
-        debug_last_raw_mm = range_mm; 
-        // --------------------------
+        // Tilt Compensation
+        float tilt = degreesToRadians(calculateTiltAngle(&inclination) / 10);
+        if (tilt < 0.43f) ToF_Height *= cos_approx(tilt);
 
-        // Validate Range (0 to 3.5m)
-        if (range_mm > 0 && range_mm < 3500) { 
-            
-            // Convert mm to cm for Magis logic
-            ToF_Height = (float)range_mm / 10.0f; 
-            
-            // Tilt Compensation: h = d * cos(theta)
-            // If the drone tilts, the laser distance increases. We correct this back to vertical height.
-            tilt = degreesToRadians(calculateTiltAngle(&inclination) / 10);
-            if (tilt < 0.43f) { // approx 25 degrees
-                ToF_Height *= cos_approx(tilt);
-            }
+        // --- DYNAMIC OFFSET CORRECTION ---
+        // Calculate what the offset IS right now
+        float current_offset = Baro_Height - ToF_Height;
 
-            // Sensor Fusion Strategy:
-            // - Low Altitude (< 2m): Trust Laser (High precision)
-            // - High Altitude: Fall back to Barometer
-            if (ToF_Height > 0 && ToF_Height < 200) {
-                 // Calculate the offset between Baro and Laser to smooth the transition later
-                baro_offset = filtered - EstAlt; 
-                
-                // Update Estimate using Laser
-                correctedWithTof(ToF_Height);
-            } else {
-                // Too high for laser confidence, use Baro
-                correctedWithBaro(Baro_Height - baro_offset, dt);
-            }
+        if (!is_offset_init) {
+            // First run: Snap immediately
+            baro_ground_offset = current_offset;
+            is_offset_init = true;
         } else {
-             // Out of valid range (reading error or infinity), use Baro
-             correctedWithBaro(Baro_Height - baro_offset, dt);
+            // "Table Protection": Only update offset if the change is smooth.
+            // If offset jumps drastically (>50cm), we flew over a table/hole.
+            // Don't learn the table height into the offset!
+            if (abs(current_offset - baro_ground_offset) < 50.0f) {
+                // Smoothly update the offset to account for weather drift
+                baro_ground_offset = (baro_ground_offset * (1.0f - offset_alpha)) + (current_offset * offset_alpha);
+            }
         }
+
+        // FORCE THE STATE (Fixes the "Zero" bug)
+        // We tell the estimator: "I know exactly where I am."
+        setAltitude(ToF_Height);
+        last_valid_tof = ToF_Height;
+
     } else {
-        // No new Laser data this cycle, just update Baro logic
-        correctedWithBaro(Baro_Height - baro_offset, dt);
+        // --- ZONE C: HIGH ALTITUDE (Trust Baro + Offset) ---
+        
+        if (is_offset_init) {
+            // We are blind (no laser), but we know where the ground WAS relative to the barometer.
+            float virtual_height = Baro_Height - baro_ground_offset;
+            
+            // Soft Handover: If virtual height is very different from last known ToF, 
+            // maybe apply a filter, but generally we trust the calibrated baro.
+            setAltitude(virtual_height);
+        } else {
+            // We took off without laser? Fallback to raw baro logic
+            correctedWithBaro(Baro_Height, dt);
+        }
     }
+    
+    // NEW (Correct):
+    // We take the internal float position (which setAltitude just updated)
+    // and cast it to the global integer variable the rest of the system uses.
+    MyEstAlt = (int32_t)ToF_Height;
 }
 #endif
 
@@ -713,7 +731,7 @@ void correctedWithTof ( float ToF_Height ) {
     setAltitude ( ToF_Height );
     first_reads++;
   }
-  _position_error_z = ToF_Height - EstAlt;
+  _position_error_z = ToF_Height - MyEstAlt;
   if ( _time_constant_z != 1.5f ) {
     _time_constant_z = 1.5;
     updateGains ( );
@@ -750,7 +768,7 @@ void setAltitude ( float new_altitude ) {
 }
 
 int32_t altitudeHoldGetEstimatedAltitude ( void ) {
-  return EstAlt;
+  return MyEstAlt;
 }
 
 int32_t getSetVelocity ( void ) {
@@ -785,11 +803,11 @@ void setAltitude ( int32_t altitude ) {
 }
 
 void setRelativeAltitude ( int32_t altitude ) {
-  AltHold = EstAlt + altitude;
+  AltHold = MyEstAlt + altitude;
 }
 
 int32_t getEstAltitude ( ) {
-  return EstAlt;
+  return MyEstAlt;
   // altest=EstAlt;
 }
 
@@ -807,7 +825,7 @@ int32_t getEstVelocity1 ( ) {
 
 bool limitAltitude ( ) {
   if ( max_altitude != -1 && IS_RC_MODE_ACTIVE ( BOXBARO ) ) {
-    if ( EstAlt >= ( max_altitude - 50 ) ) {
+    if ( MyEstAlt >= ( max_altitude - 50 ) ) {
       return true;
     }
   }

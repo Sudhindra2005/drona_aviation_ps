@@ -9,7 +9,19 @@
 
 extern LaserSensor_L1 XVision;       // Tell compiler XVision exists elsewhere
 extern float BaroAlt;              // Tell compiler BaroAlt exists
-extern float EstAlt;               // Final Estimated Altitude
+extern int32_t MyEstAlt;               // Final Estimated Altitude
+
+// In PlutoPilot.cpp
+extern int16_t debug_flow_x;
+extern int16_t debug_flow_y;
+extern int16_t debug_flow_squal;
+
+extern int16_t gyroADC[3];
+// Add Externs
+extern int16_t debug_raw_flow_x;
+extern int16_t debug_raw_flow_y;
+extern int16_t debug_gyro_roll;
+extern int16_t debug_gyro_pitch;
 
 // Add these lines at the top with your other externs
 // extern int32_t debug_checkReading_count;
@@ -51,6 +63,21 @@ void onLoopStart ( void ) {
 void plutoLoop ( void ) {
 unsigned long now = millis();
 
+// if (now - lastPrintTime >= 100) {
+//         lastPrintTime = now;
+
+//         // Print Group A: Flow X vs Gyro Roll/Pitch
+//         Monitor_Println("FlowX:", debug_raw_flow_x);
+//         Monitor_Println("FlowY:", debug_raw_flow_y);
+
+//         Monitor_Println("gyro_PITCH:", gyroADC[PITCH]);
+//         Monitor_Println("gyro_ROLL:", gyroADC[ROLL]);
+//         Monitor_Println("SQUAL:", debug_flow_squal);
+        
+//         // Verify Motion
+//         Monitor_Println("Cleaned_FlowX:", debug_flow_x);
+//         Monitor_Println("Cleaned_FlowY:", debug_flow_y);
+// }
     // if (now - lastPrintTime >= 100) { // 10Hz Refresh Rate
     //     lastPrintTime = now;
 
@@ -63,9 +90,22 @@ unsigned long now = millis();
     //     // Print the Raw Data
     //     Monitor_Println(", RawMM:", debug_last_raw_mm);
     // }
+
+
   // Add your repeated code here
-// unsigned long now = millis();
+  // unsigned long now = millis();
 //     static uint32_t lastPrint = 0;
+
+      // if (now - lastPrintTime >= 100) {
+      //       lastPrintTime = now;
+
+      //       // Verify Quality first (Should be > 0, typically 50-100 on carpet)
+      //       Monitor_Println("SQUAL:", debug_flow_squal);
+            
+      //       // Verify Motion
+      //       Monitor_Println("FlowX:", debug_flow_x);
+      //       Monitor_Println("FlowY:", debug_flow_y);
+      //   }
 //     if (millis() - lastPrint > 100) { // Limit to 10Hz
 //         lastPrint = millis();
 //         // Read the global variable directly to see if the pipeline is delivering data
@@ -84,22 +124,22 @@ unsigned long now = millis();
         float laser_cm = laser_mm / 10.0f;
 
         // 3. Get the Final Fused Estimate (what the drone actually thinks its height is)
-        float fused_cm = EstAlt;
+        float fused_cm = MyEstAlt;
 
         // Print for Teleplot (Graph format)
         // Format: "GRAPH:Label:Value"
         
-        Monitor_Println("GRAPH:Baro_cm:", baro_cm);
-        Monitor_Println("GRAPH:Laser_cm:", laser_cm, 1);
-        Monitor_Println("GRAPH:Fused_cm:", fused_cm);
-        
+        Monitor_Println("Baro_cm:", baro_cm);
+        Monitor_Println("Laser_cm:", laser_cm, 1);
+        Monitor_Println("Fused_cm:", fused_cm);
+    }
         // Use this if you just want to read text values
         /*
         Monitor_Print("Baro: ", baro_cm);
         Monitor_Print(" | Laser: ", laser_cm, 1);
         Monitor_Println(" | Fused: ", fused_cm);
         */
-    }
+    //}
 }
 
 // The function is called once after plutoLoop when you deactivate Developer Mode

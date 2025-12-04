@@ -89,12 +89,21 @@
 #include "config/config_master.h"
 
 #include "opticflow.h"
+#include "drivers/ranging_vl53l1x.h"
 
-#include "../drivers/opticflow_paw3903.h"
+#include "../drivers/paw3903_opticflow.h"
 #include "mw.h"
 
 #define UPDATE_FREQUENCY (1000 * 10) //100Hz
 #define SENSORFLOW_LPS 0.05
+
+extern LaserSensor_L1 XVision;  
+extern int16_t gyroADC[XYZ_AXIS_COUNT];
+
+// Global Variables for Flow Logic
+uint32_t last_opticflow_update_ms;
+float flowRate[2];
+float bodyRate[2];
 
 // minimum assumed height
 const float height_min = 0.1;
@@ -136,9 +145,19 @@ float debugOpticFlow[2];
 float debugOpticFlow1[2];
 float debugOpticFlow2[3];
 
+// Debug variables for PlutoPilot
+int16_t debug_flow_x = 0;
+int16_t debug_flow_y = 0;
+int16_t debug_flow_squal = 0;
 
+int16_t debug_gyro_comp_x = 0;
+int16_t debug_raw_delta_x = 0;
 
-
+// --- ADD THESE DEBUG VARIABLES AT TOP OF FILE ---
+int16_t debug_raw_flow_x = 0;
+int16_t debug_raw_flow_y = 0;
+int16_t debug_gyro_roll = 0;
+int16_t debug_gyro_pitch = 0;
 
 void updateHeightEstimate(uint32_t currentTime)
 {
@@ -315,74 +334,166 @@ void updateHeightEstimate(uint32_t currentTime)
 
 void calculateSensorFlow(uint32_t currentTime)
 {
+    float laser_mm = XVision.getLaserRange();
+    float laser_cm = laser_mm / 10.0f;
 
-    float *tempVector;
     static uint32_t previousTime;
-
     float dt = (currentTime - previousTime) / 1000000.0f;
-
-    uint32_t dTime;
-    dTime = currentTime - previousTime;
-
-    if (dTime < UPDATE_FREQUENCY)
-        return;
-
+    if (dt < 0.01f) return;
     previousTime = currentTime;
 
-    /* Sanity Check */
-//       if (dTime > 2 * UPDATE_FREQUENCY) {       //Too long. Reset things.
-//           imuResetAccelerationSum(0);
-//       }
+    // 1. Get your new Stable Altitude (convert cm -> meters)
+    // We clamp it to 5cm minimum to avoid divide-by-zero explosions on the ground
+    float altitude_m = (float)constrain(laser_cm, 5, 200) / 100.0f;
 
+    // 2. Read Raw Flow (Burst Mode)
+    PAW3903_Data flowData;
+    if (paw3903_read_motion_burst(flowData)) {
 
-    float raw_flow[2];
+// 1. Capture Raw Data for Debugging
+        // 2. Capture Gyro Data (Raw)
+        // We cast to int16_t to match the flow data type for easier comparison
+        // debug_gyro_roll  = (int16_t)gyroADC[ROLL];
+        // debug_gyro_pitch = (int16_t)gyroADC[PITCH];
 
-    raw_flow[0] = flowRate[0] + bodyRate[1];
-    raw_flow[1] = -(flowRate[1] + bodyRate[0]);
+        // --- DEBUG BRIDGE ---
+        debug_raw_flow_x = flowData.deltaX;
+        debug_raw_flow_y = flowData.deltaY;
+        debug_flow_squal = flowData.squal;
+        // --------------------
 
-    debugOpticFlow[0]=raw_flow[0];
-    debugOpticFlow[1]=raw_flow[1];
+    // SCALAR TUNING:
+        // Start with 0.5. If graph spikes in direction of tilt -> Increase (try 1.0)
+        // If graph spikes OPPOSITE to tilt -> Decrease or change sign.
+        float gyro_scalar_x = 0.2f;
+        float gyro_scalar_y = 0.4f; 
 
+        // Note: Signs (-/+) might need flipping depending on sensor mounting.
+        // Standard starting point:
+        float gyroCompX = -(float)gyroADC[ROLL] * gyro_scalar_x;  
+        float gyroCompY =  -(float)gyroADC[PITCH] * gyro_scalar_y;
 
-//    raw_flow[0]=constrainf(raw_flow[0], -flow_max, flow_max);
-//    raw_flow[1]=constrainf(raw_flow[1], -flow_max, flow_max);
+        // 2. Apply Compensation
+        float flowX_clean = (float)flowData.deltaX - gyroCompX;
+        float flowY_clean = (float)flowData.deltaY - gyroCompY;
 
-    filtered_raw_flow[0] = (filtered_raw_flow[0] * (1 - SENSORFLOW_LPS)) + (raw_flow[0] * SENSORFLOW_LPS);
-    filtered_raw_flow[1] = (filtered_raw_flow[1] * (1 - SENSORFLOW_LPS)) + (raw_flow[1] * SENSORFLOW_LPS);
+        // 3. Debug Output to Teleplot
+        // We print "Clean" vs "Raw" to see if we improved it.
+        debug_flow_x = (int16_t)flowX_clean; 
+        debug_flow_y = (int16_t)flowY_clean;
 
-//    sensor_flow[0]=filtered_raw_flow[0]*constrainf((opticflowHeight), height_min, height_max);
-//    sensor_flow[1]=filtered_raw_flow[1]*constrainf((opticflowHeight), height_min, height_max);
+        // 3. Quality Check
+        if (flowData.squal < 25) {
+            // Surface texture is too poor (e.g. shiny floor), ignore
+            return;
+        }
 
-    sensor_flow[0] = filtered_raw_flow[0] * constrainf((NewSensorRange * 0.001), height_min, height_max);
-    sensor_flow[1] = filtered_raw_flow[1] * constrainf((NewSensorRange * 0.001), height_min, height_max);
+        // 4. Gyro Compensation (Essential!)
+        // Without this, tilting the drone looks like "movement" to the camera.
+        // We subtract the rotation component.
+        // Note: You may need to tune the '30.0f' scalar depending on lens FOV.
+        // Use gyroADC directly. Note: These are raw values, you might need a scale factor.
+        // 30.0f was a guess for rad/s -> pixel. If gyroADC is raw, you might need a smaller number like 0.5f
 
+        // float gyroCompX = -gyroADC[ROLL] * 0.5f; 
+        // float gyroCompY =  gyroADC[PITCH] * 0.5f;
 
-    debugOpticFlow1[0]=filtered_raw_flow[0];
-    debugOpticFlow1[1]=filtered_raw_flow[1];
+        // float flowX_clean = (float)flowData.deltaX - gyroCompY;
+        // float flowY_clean = (float)flowData.deltaY - gyroCompX;
 
+        // 5. Calculate Velocity (The "Optical Flow Equation")
+        // Velocity = (PixelFlow * Altitude) / Time
+        // FLOW_SCALER is related to lens focal length (start with 0.003)
 
+        float FLOW_SCALER = 0.003f; 
 
-    tempVector = dcmBodyToEarth3D(sensor_flow);              //hbf
+        float velX_mps = (flowX_clean * altitude_m * FLOW_SCALER) / dt;
+        float velY_mps = (flowY_clean * altitude_m * FLOW_SCALER) / dt;
 
-    sensor_flow_hf[0] = tempVector[0];
-    sensor_flow_hf[1] = tempVector[1];
-
-    if (ARMING_FLAG(ARMED)) {
-
-        VelocityX = sensor_flow_hf[0] * 100;
-        VelocityY = sensor_flow_hf[1] * 100;
-
-        PositionX += (VelocityX * dt) + (0.5 * accel_hf[0]) * (dt * dt);
-        PositionY += (VelocityY * dt) + (0.5 * accel_hf[1]) * (dt * dt);
-    } else {
-
-        VelocityX = 0;
-        VelocityY = 0;
-        PositionX = 0;
-        PositionY = 0;
+        // 6. Push to Global State (for Position Controller)
+        if (ARMING_FLAG(ARMED)) {
+            // Apply Low Pass Filter
+            filtered_raw_flow[0] = (filtered_raw_flow[0] * 0.8f) + (velX_mps * 0.2f);
+            filtered_raw_flow[1] = (filtered_raw_flow[1] * 0.8f) + (velY_mps * 0.2f);
+            
+            VelocityX = filtered_raw_flow[0] * 100.0f; // m/s to cm/s
+            VelocityY = filtered_raw_flow[1] * 100.0f;
+        } else {
+            VelocityX = 0; VelocityY = 0;
+        }
     }
-
 }
+
+// void calculateSensorFlow(uint32_t currentTime)
+// {
+
+//     float *tempVector;
+//     static uint32_t previousTime;
+
+//     float dt = (currentTime - previousTime) / 1000000.0f;
+
+//     uint32_t dTime;
+//     dTime = currentTime - previousTime;
+
+//     if (dTime < UPDATE_FREQUENCY)
+//         return;
+
+//     previousTime = currentTime;
+
+//     /* Sanity Check */
+// //       if (dTime > 2 * UPDATE_FREQUENCY) {       //Too long. Reset things.
+// //           imuResetAccelerationSum(0);
+// //       }
+
+
+//     float raw_flow[2];
+
+//     raw_flow[0] = flowRate[0] + bodyRate[1];
+//     raw_flow[1] = -(flowRate[1] + bodyRate[0]);
+
+//     debugOpticFlow[0]=raw_flow[0];
+//     debugOpticFlow[1]=raw_flow[1];
+
+
+// //    raw_flow[0]=constrainf(raw_flow[0], -flow_max, flow_max);
+// //    raw_flow[1]=constrainf(raw_flow[1], -flow_max, flow_max);
+
+//     filtered_raw_flow[0] = (filtered_raw_flow[0] * (1 - SENSORFLOW_LPS)) + (raw_flow[0] * SENSORFLOW_LPS);
+//     filtered_raw_flow[1] = (filtered_raw_flow[1] * (1 - SENSORFLOW_LPS)) + (raw_flow[1] * SENSORFLOW_LPS);
+
+// //    sensor_flow[0]=filtered_raw_flow[0]*constrainf((opticflowHeight), height_min, height_max);
+// //    sensor_flow[1]=filtered_raw_flow[1]*constrainf((opticflowHeight), height_min, height_max);
+
+//     sensor_flow[0] = filtered_raw_flow[0] * constrainf((NewSensorRange * 0.001), height_min, height_max);
+//     sensor_flow[1] = filtered_raw_flow[1] * constrainf((NewSensorRange * 0.001), height_min, height_max);
+
+
+//     debugOpticFlow1[0]=filtered_raw_flow[0];
+//     debugOpticFlow1[1]=filtered_raw_flow[1];
+
+
+
+//     tempVector = dcmBodyToEarth3D(sensor_flow);              //hbf
+
+//     sensor_flow_hf[0] = tempVector[0];
+//     sensor_flow_hf[1] = tempVector[1];
+
+//     if (ARMING_FLAG(ARMED)) {
+
+//         VelocityX = sensor_flow_hf[0] * 100;
+//         VelocityY = sensor_flow_hf[1] * 100;
+
+//         PositionX += (VelocityX * dt) + (0.5 * accel_hf[0]) * (dt * dt);
+//         PositionY += (VelocityY * dt) + (0.5 * accel_hf[1]) * (dt * dt);
+//     } else {
+
+//         VelocityX = 0;
+//         VelocityY = 0;
+//         PositionX = 0;
+//         PositionY = 0;
+//     }
+
+// }
 
 void runFlowHold(uint32_t currentTime)
 {
@@ -392,4 +503,12 @@ void runFlowHold(uint32_t currentTime)
 
 }
 
+// FIX FOR LINKER ERROR: undefined reference to `selectVelOrPosmode'
 
+void selectVelOrPosmode(void) {
+    // This function decides whether to hold position or drift.
+    // For the hackathon/testing, we can leave it empty or 
+    // implement basic logic later.
+    
+    // An empty function satisfies the linker!
+}

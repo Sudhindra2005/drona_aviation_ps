@@ -111,6 +111,7 @@
 
 // Add at the very top of mw.cpp:
 #define LASER_ALT 1     // FORCE ENABLE: Tells scheduler to use "checkReading" (Fusion) instead of "checkBaro"
+#define OPTIC_FLOW 1
 
 /* VBAT monitoring interval (in microseconds) - 1s*/
 #define VBATINTERVAL ( 6 * 3500 )
@@ -763,7 +764,7 @@ void executePeriodicTasks ( void ) {
     case UPDATE_OPTICFLOW:
 
 #ifdef OPTIC_FLOW
-      updateSpiOpticFlow ( );
+      // updateSpiOpticFlow ( );
       runFlowHold ( currentTime );
 #endif
       break;
