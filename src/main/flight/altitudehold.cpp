@@ -89,7 +89,7 @@ int32_t PositionZ;
 uint32_t baro_last_update;
 bool AltRstRequired = 1;
 
-// int32_t altest;
+int32_t altest;
 // --- DEBUG BRIDGE VARIABLES ---
 int32_t debug_checkReading_count = 0; // Counts how many times the function runs
 int16_t debug_last_raw_mm = 0;        // Stores the last raw value seen
@@ -228,7 +228,7 @@ void configureAltitudeHold ( pidProfile_t *initialPidProfile, barometerConfig_t 
   kalmanFilterInit ( &velHoldFilter, 0.1, 1.0, 0.0 );     // Higher Q, higher R for velocity
 }
 
-#if defined( BARO ) || defined( SONAR ) || defined( LASER_ALT )
+#if defined( BARO ) || defined( LASER_ALT )
 
 int16_t initialThrottleHold_test;
 int16_t debug_e1;
@@ -490,7 +490,7 @@ void calculateEstimatedAltitude ( uint32_t currentTime ) {
 
   // Update Kalman filters with new sensor readings
   float filteredVel = kalmanFilterUpdate ( &velHoldFilter, vel_tmp );
-  //float filteredAlt = kalmanFilterUpdate ( &altHoldFilter, EstAlt );
+  float filteredAlt = kalmanFilterUpdate ( &altHoldFilter, MyEstAlt );
 
   altHoldThrottleAdjustment = calculateAltHoldThrottleAdjustment ( vel_tmp, accZ_tmp, accZ_old );
 
@@ -499,9 +499,9 @@ void calculateEstimatedAltitude ( uint32_t currentTime ) {
   accZ_old                     = accZ_tmp;
 
   // Update global variables with filtered values
-  //EstAlt = filteredAlt;
+  MyEstAlt = filteredAlt;
   vel    = filteredVel;
-  // altest=EstAlt;
+  altest=MyEstAlt;
 }
 
 /* queue implementation */
@@ -595,7 +595,7 @@ void apmCalculateEstimatedAltitude ( uint32_t currentTime ) {
   _velocity_z += velocity_increase_z;
 
   VelocityZ = lrintf ( _velocity_z );
-  // EstAlt    = lrintf ( _position_z );
+  MyEstAlt    = lrintf ( _position_z );
 
   addHistPositionBaseEstZ ( _position_base_z );
 
@@ -605,7 +605,7 @@ void apmCalculateEstimatedAltitude ( uint32_t currentTime ) {
 
   // Update global variables with filtered values
   VelocityZ = lrintf ( filteredVelocityZ );
-  // EstAlt    = lrintf ( filteredEstAlt );
+  MyEstAlt    = lrintf ( filteredEstAlt );
 
   altHoldThrottleAdjustment = calculateAltHoldThrottleAdjustment ( VelocityZ, accZ_tmp, accZ_old );
   accZ_old                  = accZ_tmp;
@@ -688,7 +688,7 @@ void checkReading() {
     // NEW (Correct):
     // We take the internal float position (which setAltitude just updated)
     // and cast it to the global integer variable the rest of the system uses.
-    MyEstAlt = (int32_t)ToF_Height;
+    MyEstAlt = (int32_t)_position_z;
 }
 #endif
 
@@ -808,7 +808,7 @@ void setRelativeAltitude ( int32_t altitude ) {
 
 int32_t getEstAltitude ( ) {
   return MyEstAlt;
-  // altest=EstAlt;
+  altest=MyEstAlt;
 }
 
 int32_t getEstVelocity ( ) {
