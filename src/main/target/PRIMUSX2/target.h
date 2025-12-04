@@ -75,6 +75,16 @@ extern "C" {
 #define BARO
 #define LASER_ALT
 #define USE_BARO_ICP10111
+// --- Hardware Feature Definitions ---
+
+// Enable the new VL53L1X Driver
+#define LASER_TOF_L1x  
+
+// Enable Optical Flow
+#define OPTIC_FLOW     
+
+// Enable the new VL53L1X Driver
+#define LASER_TOF
 
 #define BRUSHED_MOTORS
 

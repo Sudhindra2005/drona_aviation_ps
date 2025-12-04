@@ -56,6 +56,8 @@
 #include "command/command.h"
 #include "altitudehold.h"
 
+#define LASER_ALT 1 // FORCE ENABLE
+
 // --- CHANGE 2: Use the Global Instance (DO NOT Create a new one) ---
 extern LaserSensor_L1 XVision;
 
@@ -88,6 +90,11 @@ uint32_t baro_last_update;
 bool AltRstRequired = 1;
 
 // int32_t altest;
+// --- DEBUG BRIDGE VARIABLES ---
+int32_t debug_checkReading_count = 0; // Counts how many times the function runs
+int16_t debug_last_raw_mm = 0;        // Stores the last raw value seen
+int8_t  debug_startRanging_result = 0; // Stores if startRanging() returned true (1) or false (0)
+// ------------------------------
 
 static barometerConfig_t *barometerConfig;
 static pidProfile_t *pidProfile;
@@ -589,52 +596,79 @@ void apmCalculateEstimatedAltitude ( uint32_t currentTime ) {
 
 #ifdef LASER_ALT
 void checkReading() {
+    
+    // --- DEBUG HEARTBEAT ---
+    // Prove that the scheduler is actually calling this function.
+    // If this number doesn't go up in PlutoPilot, the #ifdef LASER_ALT is failing.
+    debug_checkReading_count++; 
+
     uint32_t baro_update_time;
     float dt;
     float tilt = 0;
     static int32_t baro_offset = 0;
 
-    // 1. Process Barometer
+    // ---------------------------------------------------------
+    // 1. Process Barometer (Standard Logic)
+    // ---------------------------------------------------------
     baro_update_time = getBaroLastUpdate();
     if (baro_update_time != baro_last_update) {
         dt = (float)(baro_update_time - baro_last_update) * 0.001f;
         Baro_Height = baroCalculateAltitude();
+        
+        // Simple Low Pass Filter on Baro
         filtered = (0.75f * filtered) + ((1 - 0.75f) * Baro_Height);
         baro_last_update = baro_update_time;
     }
 
-    // 2. Process VL53L1X Laser Sensor
-    // The problem statement requires calling startRanging periodically.
-    if (XVision.startRanging()) {
+    // ---------------------------------------------------------
+    // 2. Process VL53L1X Laser Sensor (with Debugging)
+    // ---------------------------------------------------------
+    
+    // Capture the boolean result to see if the driver thinks data is ready
+    bool isDataReady = XVision.startRanging();
+    debug_startRanging_result = isDataReady ? 1 : 0;
+
+    if (isDataReady) {
         
         // Fetch raw range
         int16_t range_mm = XVision.getLaserRange();
         
-        // Validate
-        if (range_mm > 0 && range_mm < 3500) { // 3.5m cutoff
+        // --- DEBUG DATA CAPTURE ---
+        debug_last_raw_mm = range_mm; 
+        // --------------------------
+
+        // Validate Range (0 to 3.5m)
+        if (range_mm > 0 && range_mm < 3500) { 
             
-            // Convert to cm for Magis logic
+            // Convert mm to cm for Magis logic
             ToF_Height = (float)range_mm / 10.0f; 
             
-            // Tilt Compensation
+            // Tilt Compensation: h = d * cos(theta)
+            // If the drone tilts, the laser distance increases. We correct this back to vertical height.
             tilt = degreesToRadians(calculateTiltAngle(&inclination) / 10);
-            if (tilt < 0.43f) { // approx 25 deg
+            if (tilt < 0.43f) { // approx 25 degrees
                 ToF_Height *= cos_approx(tilt);
             }
 
-            // Sensor Fusion: Trust Laser at low alt, Baro at high alt
+            // Sensor Fusion Strategy:
+            // - Low Altitude (< 2m): Trust Laser (High precision)
+            // - High Altitude: Fall back to Barometer
             if (ToF_Height > 0 && ToF_Height < 200) {
-                 // Update Baro offset based on accurate Laser data
+                 // Calculate the offset between Baro and Laser to smooth the transition later
                 baro_offset = filtered - EstAlt; 
+                
+                // Update Estimate using Laser
                 correctedWithTof(ToF_Height);
             } else {
+                // Too high for laser confidence, use Baro
                 correctedWithBaro(Baro_Height - baro_offset, dt);
             }
         } else {
+             // Out of valid range (reading error or infinity), use Baro
              correctedWithBaro(Baro_Height - baro_offset, dt);
         }
     } else {
-        // No new data, just update baro logic
+        // No new Laser data this cycle, just update Baro logic
         correctedWithBaro(Baro_Height - baro_offset, dt);
     }
 }

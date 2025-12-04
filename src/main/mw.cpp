@@ -109,6 +109,9 @@
 #include "command/localisationCommand.h"
 #include "drivers/opticflow_paw3903.h"
 
+// Add at the very top of mw.cpp:
+#define LASER_ALT 1     // FORCE ENABLE: Tells scheduler to use "checkReading" (Fusion) instead of "checkBaro"
+
 /* VBAT monitoring interval (in microseconds) - 1s*/
 #define VBATINTERVAL ( 6 * 3500 )
 /* IBat monitoring interval (in microseconds) - 6 default looptimes */
@@ -767,16 +770,16 @@ void executePeriodicTasks ( void ) {
 
     case UPDATE_LASER_TOF_TASK:
 
-#ifdef LASER_TOF
+// #ifdef LASER_TOF
 
-      getRange ( );
+//       getRange ( );
 
-#endif
-#ifdef LASER_TOF_L1x
+// #endif
+// #ifdef LASER_TOF_L1x
 
-      getRange_L1 ( );
+//       getRange_L1 ( );
 
-#endif
+// #endif
       //        if(useRangingSensor)
       //            getRange();
 

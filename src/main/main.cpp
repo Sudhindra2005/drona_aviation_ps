@@ -437,6 +437,7 @@ void init ( void ) {
     failureFlag |= ( 1 << FAILURE_VL53L1X );
   }
 
+
   // TODO: Uncomment to Init PAW3903 Opticflow Sensor
   if ( ! paw3903_init ( ) ) {
     failureFlag |= ( 1 << FAILURE_PAW3903 );
@@ -581,16 +582,16 @@ void init ( void ) {
 
   systemState |= SYSTEM_STATE_READY;
 
-#ifdef LASER_TOF
+// #ifdef LASER_TOF
 
-  ranging_init ( );
+//   ranging_init ( );
 
-#endif
-#ifdef LASER_TOF_L1x
+// #endif
+// #ifdef LASER_TOF_L1x
 
-  ranging_init_L1 ( );
+//   ranging_init_L1 ( );
 
-#endif
+// #endif
 
   // spi.Init();
   // spi.Settings(MODE0, 562, LSBFIRST);

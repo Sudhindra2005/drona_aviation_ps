@@ -11,6 +11,11 @@ extern LaserSensor_L1 XVision;       // Tell compiler XVision exists elsewhere
 extern float BaroAlt;              // Tell compiler BaroAlt exists
 extern float EstAlt;               // Final Estimated Altitude
 
+// Add these lines at the top with your other externs
+// extern int32_t debug_checkReading_count;
+// extern int16_t debug_last_raw_mm;
+// extern int8_t  debug_startRanging_result;
+
 /**
  * Configures Pluto's receiver to use PPM or default ESP mode; activate the line matching your setup.
  * AUX channel configurations is only for PPM recievers if no custom configureMode function is called this are the default setup
@@ -44,8 +49,28 @@ void onLoopStart ( void ) {
 
 // The loop function is called in an endless loop
 void plutoLoop ( void ) {
-  // Add your repeated code here
 unsigned long now = millis();
+
+    // if (now - lastPrintTime >= 100) { // 10Hz Refresh Rate
+    //     lastPrintTime = now;
+
+    //     // Print the Heartbeat (Should increase constantly)
+    //     Monitor_Print("TaskCount:", debug_checkReading_count);
+
+    //     // Print the Boolean Result (0 or 1)
+    //     Monitor_Print(", IsReady:", debug_startRanging_result);
+
+    //     // Print the Raw Data
+    //     Monitor_Println(", RawMM:", debug_last_raw_mm);
+    // }
+  // Add your repeated code here
+// unsigned long now = millis();
+//     static uint32_t lastPrint = 0;
+//     if (millis() - lastPrint > 100) { // Limit to 10Hz
+//         lastPrint = millis();
+//         // Read the global variable directly to see if the pipeline is delivering data
+//         Monitor_Println("Debug Range:", XVision.getLaserRange()); 
+//     }
 
     if (now - lastPrintTime >= 100) { // 10Hz Printing
         lastPrintTime = now;

@@ -162,72 +162,82 @@ bool isOutofRange_L1 ( void ) {
 
 #endif
 
-static bool _startNow = true;
+// static bool _startNow = true;
 
-bool LaserSensor_L1::init ( VL53L1_DistanceModes _DistanceMode ) {
+// ====================================================================
+// MINIMAL SAFE VERSION (Prevents Boot Freeze)
+// Replace the bottom of drivers/ranging_vl53l1x.cpp with this:
+// ====================================================================
 
-  // Set the I2C device address for the sensor
-  MyDevice_L1x.I2cDevAddr = 0x29;
-  // Set the communication type (1 indicates I2C)
-  MyDevice_L1x.comms_type = 1;
-  // Set the communication speed in kHz
-  MyDevice_L1x.comms_speed_khz = 400;
+bool LaserSensor_L1::init(VL53L1_DistanceModes _DistanceMode) {
+    // 1. Basic Setup
+    MyDevice_L1x.I2cDevAddr = 0x29;
+    MyDevice_L1x.comms_type = 1;
+    MyDevice_L1x.comms_speed_khz = 400;
 
-  // Wait until the device has completed its boot process.
-  // This is a blocking call that updates _Global_Status_L1x with the result.
-  _Global_Status_L1x = VL53L1_WaitDeviceBooted ( &MyDevice_L1x );
+    // 2. Boot & Init (Standard Sequence)
+    // Note: If the sensor is disconnected, WaitDeviceBooted might hang.
+    // Ensure your sensor is plugged in securely!
+    _Global_Status_L1x = VL53L1_WaitDeviceBooted(&MyDevice_L1x);
+    if (_Global_Status_L1x != VL53L1_ERROR_NONE) return false;
 
-  // Check if there was no error during the boot process
-  if ( _Global_Status_L1x == VL53L1_ERROR_NONE )
-    // Initialize data structures related to the device
-    _Global_Status_L1x = VL53L1_DataInit ( &MyDevice_L1x );
+    _Global_Status_L1x = VL53L1_DataInit(&MyDevice_L1x);
+    if (_Global_Status_L1x != VL53L1_ERROR_NONE) return false;
 
-  // If data initialization was successful, proceed with static device initialization
-  if ( _Global_Status_L1x == VL53L1_ERROR_NONE )
-    _Global_Status_L1x = VL53L1_StaticInit ( &MyDevice_L1x );
+    _Global_Status_L1x = VL53L1_StaticInit(&MyDevice_L1x);
+    if (_Global_Status_L1x != VL53L1_ERROR_NONE) return false;
 
-  // If static initialization was successful, set the distance mode to medium
-  if ( _Global_Status_L1x == VL53L1_ERROR_NONE )
-    _Global_Status_L1x = VL53L1_SetDistanceMode ( &MyDevice_L1x, _DistanceMode );
+    _Global_Status_L1x = VL53L1_SetDistanceMode(&MyDevice_L1x, _DistanceMode);
+    if (_Global_Status_L1x != VL53L1_ERROR_NONE) return false;
 
-  // Return true if all operations were successful, otherwise return false
-  if ( _Global_Status_L1x == VL53L1_ERROR_NONE )
-    return true;
-  return false;
-}
+    // --- CRASH FIX: Removed Timing Budget commands ---
+    // (We accept the default timing to avoid I2C hangs)
 
-void LaserSensor_L1::setAddress ( uint8_t _address ) {
-  // Call the VL53L1 API function to set the device address.
-  // The address is multiplied by 2 due to the I2C protocol shift requirement.
-  VL53L1_SetDeviceAddress ( &MyDevice_L1x, ( _address * 2 ) );
-  // Update the internal record of the device's I2C address.
-  MyDevice_L1x.I2cDevAddr = _address;
-}
-
-bool LaserSensor_L1::startRanging ( void ) {
-
-  if ( _Global_Status_L1x == VL53L1_ERROR_NONE && _startNow ) {
-    _Global_Status_L1x = VL53L1_StartMeasurement ( &MyDevice_L1x );
-    _startNow          = false;
-    Monitor_Println ( "check1", _Global_Status_L1x );
-  }
-  if ( _Global_Status_L1x == VL53L1_ERROR_NONE ) {
-    _Global_Status_L1x = VL53L1_GetRangingMeasurementData ( &MyDevice_L1x, &_RangingMeasurementData_L1x );
-
-    isTofDataNewflag_L1 = true;
-    if ( ! _RangingMeasurementData_L1x.RangeStatus ) {
-
-      if ( _RangingMeasurementData_L1x.RangeMilliMeter < 4500 ) {
-
-        _range = _RangingMeasurementData_L1x.RangeMilliMeter;
+    // 3. Start Continuous Measurement
+    // This is the key to getting data. We start it ONCE here.
+    _Global_Status_L1x = VL53L1_StartMeasurement(&MyDevice_L1x);
+    
+    // Set flag so we know init succeeded
+    if (_Global_Status_L1x == VL53L1_ERROR_NONE) {
+        useRangingSensor_L1 = true;
         return true;
-      }
     }
-  }
-  _range = -1;
-  return false;
+    return false;
 }
 
-int16_t LaserSensor_L1::getLaserRange ( void ) {
-  return _range;
+void LaserSensor_L1::setAddress(uint8_t _address) {
+    VL53L1_SetDeviceAddress(&MyDevice_L1x, (_address * 2));
+    MyDevice_L1x.I2cDevAddr = _address;
+}
+
+bool LaserSensor_L1::startRanging(void) {
+    uint8_t dataReady = 0;
+
+    // 1. Check Status
+    _Global_Status_L1x = VL53L1_GetMeasurementDataReady(&MyDevice_L1x, &dataReady);
+
+    // 2. Only read if data is actually ready (dataReady == 1)
+    if ((_Global_Status_L1x == VL53L1_ERROR_NONE) && (dataReady == 1)) {
+        
+        // Fetch
+        _Global_Status_L1x = VL53L1_GetRangingMeasurementData(&MyDevice_L1x, &_RangingMeasurementData_L1x);
+        
+        // CRITICAL: Clear Interrupt to allow next measurement
+        VL53L1_ClearInterruptAndStartMeasurement(&MyDevice_L1x);
+
+        // Update Variable
+        if (_Global_Status_L1x == VL53L1_ERROR_NONE) {
+            if (_RangingMeasurementData_L1x.RangeStatus == 0 || _RangingMeasurementData_L1x.RangeStatus == 7) {
+                _range = _RangingMeasurementData_L1x.RangeMilliMeter;
+                if (_range <= 0) _range = 1; // Prevent 0 from looking like an error
+                return true; 
+            }
+        }
+    }
+    
+    return false; 
+}
+
+int16_t LaserSensor_L1::getLaserRange(void) {
+    return _range;
 }
