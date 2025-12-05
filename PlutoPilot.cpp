@@ -19,6 +19,12 @@ extern int16_t debug_flow_squal;
 extern float gyroCompX;
 extern float gyroCompY;
 
+extern int16_t accSmooth [ XYZ_AXIS_COUNT ];
+extern int32_t accSum [ XYZ_AXIS_COUNT ];
+extern int32_t accSumXYZ [ XYZ_AXIS_COUNT ];
+
+extern int accSumCountXYZ;
+
 // Add Externs
 extern int16_t debug_raw_flow_x;
 extern int16_t debug_raw_flow_y;
@@ -29,6 +35,12 @@ extern int16_t only_imu_pos_X;
 extern int16_t only_imu_pos_Y;
 extern int16_t only_imu_vel_X;
 extern int16_t only_imu_vel_Y;
+
+extern float accel_EF[2];
+
+extern int32_t total_flow_x_counts;
+extern bool integration_active;
+extern float accVelScale;
 
 // Add these lines at the top with your other externs
 // extern int32_t debug_checkReading_count;
@@ -86,15 +98,47 @@ unsigned long now = millis();
 //         Monitor_Println("Cleaned_FlowY:", debug_flow_y);
 // }
 
-// if (now - lastPrintTime >= 100) {
-//         lastPrintTime = now;
+// CONTROL LOGIC: Using Headfree Mode Switch (AUX1)
+    static bool test_running = false;
 
-//         Monitor_Println("PosX:", only_imu_pos_X);
-//         Monitor_Println("PosY:", only_imu_pos_Y);
+    // Trigger: Roll Stick Hard Right (> 1900)
+    // HOLD the stick right to start the test "Ready State"
+    if (rcData[ROLL] > 1900 && !test_running) {
         
-//         Monitor_Println("VelX:", only_imu_vel_X);
-//         Monitor_Println("VelY:", only_imu_vel_Y);
-// }
+        total_flow_x_counts = 0;   // Reset Counter
+        integration_active = true; // Enable Counting
+        test_running = true;       // Set State
+        
+        Monitor_Println("STATUS: Recording! Rotate 90 deg, then release stick.");
+    }
+
+    // Stop Trigger: Roll Stick Released (Centered < 1600)
+    if (rcData[ROLL] < 1600 && test_running) {
+        
+        integration_active = false; // Stop Counting
+        test_running = false;       // Reset State
+        
+        // Print Results
+        Monitor_Println("Total Counts:", total_flow_x_counts);
+        
+        // Calculate (90 deg = 1.5708 rad)
+        if (abs(total_flow_x_counts) > 0) {
+            float focal_length = (float)abs(total_flow_x_counts) / 1.5708f;
+            Monitor_Println("Focal Length:", (int)focal_length);
+        } else {
+            Monitor_Println("Error: 0 Counts. Check SQUAL or Lens Cap.");
+        }
+    }
+
+    // if (now - lastPrintTime >= 100) {
+    //         lastPrintTime = now;
+
+    //         Monitor_Println("AccX:", (float)accSumCountXYZ);
+    //         Monitor_Println("AccY:", accSumCountXYZ);
+            
+    //         Monitor_Println("VelX:", (((float)accSum[0] / (float)accSumCountXYZ)*accVelScale), 4);
+    //         Monitor_Println("VelY:", only_imu_vel_Y);
+    // }
 
     // if (now - lastPrintTime >= 100) { // 10Hz Refresh Rate
     //     lastPrintTime = now;
@@ -110,47 +154,48 @@ unsigned long now = millis();
     // }
 
 
-  // Add your repeated code here
-  // unsigned long now = millis();
-//     static uint32_t lastPrint = 0;
+    //     static uint32_t lastPrint = 0;
 
-      // if (now - lastPrintTime >= 100) {
-      //       lastPrintTime = now;
+          // if (now - lastPrintTime >= 100) {
+          //       lastPrintTime = now;
 
-      //       // Verify Quality first (Should be > 0, typically 50-100 on carpet)
-      //       Monitor_Println("SQUAL:", debug_flow_squal);
-            
-      //       // Verify Motion
-      //       Monitor_Println("FlowX:", debug_flow_x);
-      //       Monitor_Println("FlowY:", debug_flow_y);
-      //   }
-//     if (millis() - lastPrint > 100) { // Limit to 10Hz
-//         lastPrint = millis();
-//         // Read the global variable directly to see if the pipeline is delivering data
-//         Monitor_Println("Debug Range:", XVision.getLaserRange()); 
-//     }
+          //       // Verify Quality first (Should be > 0, typically 50-100 on carpet)
+          //       Monitor_Println("SQUAL:", debug_flow_squal);
+                
+          //       // Verify Motion
+          //       Monitor_Println("FlowX:", debug_flow_x);
+          //       Monitor_Println("FlowY:", debug_flow_y);
+          //   }
 
-    if (now - lastPrintTime >= 100) { // 10Hz Printing
-        lastPrintTime = now;
+    //     if (millis() - lastPrint > 100) { // Limit to 10Hz
+    //         lastPrint = millis();
+    //         // Read the global variable directly to see if the pipeline is delivering data
+    //         Monitor_Println("Debug Range:", XVision.getLaserRange()); 
+    //     }
 
-        // 1. Get Barometer Height (usually in cm)
-        float baro_cm = BaroAlt; 
 
-        // 2. Get Laser Height (using the new API)
-        // Note: getLaserRange returns mm, so divide by 10 for cm to match Baro
-        float laser_mm = XVision.getLaserRange();
-        float laser_cm = laser_mm / 10.0f;
 
-        // 3. Get the Final Fused Estimate (what the drone actually thinks its height is)
-        float fused_cm = MyEstAlt;
+    // if (now - lastPrintTime >= 100) { // 10Hz Printing
+    //     lastPrintTime = now;
 
-        // Print for Teleplot (Graph format)
-        // Format: "GRAPH:Label:Value"
+    //     // 1. Get Barometer Height (usually in cm)
+    //     float baro_cm = BaroAlt; 
+
+    //     // 2. Get Laser Height (using the new API)
+    //     // Note: getLaserRange returns mm, so divide by 10 for cm to match Baro
+    //     float laser_mm = XVision.getLaserRange();
+    //     float laser_cm = laser_mm / 10.0f;
+
+    //     // 3. Get the Final Fused Estimate (what the drone actually thinks its height is)
+    //     float fused_cm = MyEstAlt;
+
+    //     // Print for Teleplot (Graph format)
+    //     // Format: "GRAPH:Label:Value"
         
-        Monitor_Println("Baro_cm:", baro_cm);
-        Monitor_Println("Laser_cm:", laser_cm, 1);
-        Monitor_Println("Fused_cm:", fused_cm);
-    }
+    //     Monitor_Println("Baro_cm:", baro_cm);
+    //     Monitor_Println("Laser_cm:", laser_cm, 1);
+    //     Monitor_Println("Fused_cm:", fused_cm);
+    // }
         // Use this if you just want to read text values
         /*
         Monitor_Print("Baro: ", baro_cm);

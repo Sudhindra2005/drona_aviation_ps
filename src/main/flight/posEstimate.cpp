@@ -45,11 +45,18 @@
 
 
 #include "posControl.h"
+#include "API/FC-Data.h"
 
 #define corr_scale 512/100
 #define corr_scale2 1096/100
 #define MILLI_SEC 1000
 #define SEC 1000000
+
+extern int16_t accSmooth [ XYZ_AXIS_COUNT ];
+extern int32_t accSum [ XYZ_AXIS_COUNT ];
+extern int32_t accSumXYZ [ XYZ_AXIS_COUNT ];
+extern int accSumCountXYZ;
+extern float accVelScale;
 
 extern float flow_vel_x_est;
 extern float flow_vel_y_est;
@@ -283,6 +290,15 @@ void PosXYEstimate(uint32_t currentTime)
         } else {
             accel_EF[i] = 0;
         }
+
+        // 1. Get Accelerometer (Prediction) from API
+        // Sensor_Get returns scaled acceleration in cm/s^2 (because accVelScale is applied)
+        // We cast 'i' to 'axis_e' enum (0=X, 1=Y)
+        
+        // float raw_acc = (float)Sensor_Get(Accelerometer, (axis_e)i);
+        
+        // // Apply constraints to avoid crazy spikes
+        // accel_EF[i] = constrainf(raw_acc, -800.0f, 800.0f);
 
         // B. Integrate Accel -> Velocity (Prediction)
         // V_new = V_old + (a * dt)

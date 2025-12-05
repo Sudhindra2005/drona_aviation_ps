@@ -637,7 +637,7 @@ void apmCalculateEstimatedAltitude ( uint32_t currentTime ) {
 #ifdef LASER_ALT
 void checkReading() {
     debug_checkReading_count++; // debug heartbeat
-
+    float initial_baro_offset = 0;
     // -------------------------------------------------------------
     // 1. SENSOR ACQUISITION
     // -------------------------------------------------------------
@@ -648,7 +648,7 @@ void checkReading() {
     uint32_t baro_now = getBaroLastUpdate();
 
     if (baro_now != baro_last_update) {
-        float new_baro = baroCalculateAltitude();
+        float new_baro = baroCalculateAltitude() - initial_baro_offset;
         
         // Simple LPF on Baro to kill wind noise
         Baro_Height = (Baro_Height * 0.7f) + (new_baro * 0.3f);
@@ -657,6 +657,10 @@ void checkReading() {
         baro_trend = Baro_Height - prev_baro_alt;
         prev_baro_alt = Baro_Height;
         baro_last_update = baro_now;
+    }
+
+    if (debug_checkReading_count < 1){
+      initial_baro_offset = prev_baro_alt;
     }
 
     // B. ToF Sensor

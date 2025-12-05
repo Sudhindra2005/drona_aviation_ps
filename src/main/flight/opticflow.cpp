@@ -112,6 +112,10 @@ float flow_vel_y_est = 0.0f;
 bool flow_is_valid = false;
 bool flow_data_is_new = false; // <--- ADD THIS HANDSHAKE FLAG
 
+// --- DEBUG VARIABLES ---
+int32_t total_flow_x_counts = 0; // Accumulator
+bool integration_active = false; // Switch
+
 // minimum assumed height
 const float height_min = 0.1;
 
@@ -371,6 +375,12 @@ void calculateSensorFlow(uint32_t currentTime)
         // We cast to int16_t to match the flow data type for easier comparison
         // debug_gyro_roll  = (int16_t)gyroADC[ROLL];
         // debug_gyro_pitch = (int16_t)gyroADC[PITCH];
+
+        // --- CALIBRATION LOGIC ---
+        // If we are "Armed" (or use a switch/flag), start summing
+        if (integration_active) {
+            total_flow_x_counts += flowData.deltaX;
+        }
 
         // --- DEBUG BRIDGE ---
         debug_raw_flow_x = flowData.deltaX;

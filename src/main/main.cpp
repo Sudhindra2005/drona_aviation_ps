@@ -441,6 +441,12 @@ void init ( void ) {
   // TODO: Uncomment to Init PAW3903 Opticflow Sensor
   if ( ! paw3903_init ( ) ) {
     failureFlag |= ( 1 << FAILURE_PAW3903 );
+  }else {
+    // --- ADD THIS LINE TO LOCK THE VALUE ---
+    // This sets Resolution to 1600 CPI (0x1F or similar, depending on header enum)
+    // Check your header for the exact enum name, usually something like:
+    // PAW3903_RES_1600CPI
+    paw3903_set_resolution(PAW3903_RES_4000_CPI); 
   }
 
   if ( failureFlag != 0 ) {
