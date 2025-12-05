@@ -65,6 +65,14 @@ int16_t print_posvariable4 = 0;
 int16_t print_posvariable5 = 0;
 int16_t print_posvariable6 = 0;
 
+int16_t only_imu_pos_X = 0;
+int16_t only_imu_pos_Y = 0;
+int16_t only_imu_vel_X = 0;
+int16_t only_imu_vel_Y = 0;
+
+float est_pos_only_imu[2];
+float est_vel_only_imu[2];
+
 int16_t posX = 0;
 int16_t posY = 0;
 int16_t posZ = 0;
@@ -112,6 +120,8 @@ int16_t VelocityX = 0;
 int16_t VelocityY = 0;
 int16_t inputVx = 0;
 int16_t inputVy = 0;
+
+
 
 
 #define BUFFER_XY_MAXIMUM 6 //can be tuned
@@ -278,6 +288,7 @@ void PosXYEstimate(uint32_t currentTime)
         // V_new = V_old + (a * dt)
         velocity_increase[i] = accel_EF[i] * dt;
         est_velocity[i] += velocity_increase[i]; 
+        est_vel_only_imu[i] += velocity_increase[i];
 
         // ==========================================================
         // STEP 2: CORRECTION (The Low Frequency Flow Update)
@@ -312,6 +323,7 @@ void PosXYEstimate(uint32_t currentTime)
         
         // P_new = P_old + (V * dt)
         est_position[i] += est_velocity[i] * dt;
+        est_pos_only_imu[i] += est_vel_only_imu[i] * dt;
     }
 
     // Handshake: We have consumed the data, don't use it again until updated.
@@ -323,6 +335,11 @@ void PosXYEstimate(uint32_t currentTime)
     VelocityY = (int16_t) est_velocity[1];
     PositionX = (int16_t) est_position[0];
     PositionY = (int16_t) est_position[1];
+
+    only_imu_pos_X = (int16_t) est_pos_only_imu[0];
+    only_imu_pos_Y = (int16_t) est_pos_only_imu[1];
+    only_imu_vel_X = (int16_t) est_vel_only_imu[0];
+    only_imu_vel_Y = (int16_t) est_vel_only_imu[1];
 
 }
 

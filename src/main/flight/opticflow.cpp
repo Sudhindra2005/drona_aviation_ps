@@ -152,6 +152,13 @@ float debugOpticFlow[2];
 float debugOpticFlow1[2];
 float debugOpticFlow2[3];
 
+float gyroCompX = 0;
+float gyroCompY = 0;
+
+// 1. Add Global Variables for Filter State
+float gyro_roll_filtered = 0.0f;
+float gyro_pitch_filtered = 0.0f;
+
 // Debug variables for PlutoPilot
 int16_t debug_flow_x = 0;
 int16_t debug_flow_y = 0;
@@ -359,7 +366,7 @@ void calculateSensorFlow(uint32_t currentTime)
     PAW3903_Data flowData;
     if (paw3903_read_motion_burst(flowData)) {
 
-// 1. Capture Raw Data for Debugging
+        // 1. Capture Raw Data for Debugging
         // 2. Capture Gyro Data (Raw)
         // We cast to int16_t to match the flow data type for easier comparison
         // debug_gyro_roll  = (int16_t)gyroADC[ROLL];
@@ -371,20 +378,28 @@ void calculateSensorFlow(uint32_t currentTime)
         debug_flow_squal = flowData.squal;
         // --------------------
 
-    // SCALAR TUNING:
+        float alpha = 1.0f;
+
+        // SCALAR TUNING:
         // Start with 0.5. If graph spikes in direction of tilt -> Increase (try 1.0)
         // If graph spikes OPPOSITE to tilt -> Decrease or change sign.
         float gyro_scalar_x = 0.2f;
-        float gyro_scalar_y = 0.4f; 
+        float gyro_scalar_y = 0.48f; 
 
         // Note: Signs (-/+) might need flipping depending on sensor mounting.
-        // Standard starting point:
-        float gyroCompX = -(float)gyroADC[ROLL] * gyro_scalar_x;  
-        float gyroCompY =  -(float)gyroADC[PITCH] * gyro_scalar_y;
+        // 3. Apply Low Pass Filter (Exponential Moving Average)
+        // New_Filtered = (Old_Filtered * (1-alpha)) + (New_Raw * alpha)
+        gyro_roll_filtered  = (gyro_roll_filtered  * (1.0f - alpha)) + ((float)gyroADC[ROLL]  * alpha);
+        gyro_pitch_filtered = (gyro_pitch_filtered * (1.0f - alpha)) + ((float)gyroADC[PITCH] * alpha);
 
-        // 2. Apply Compensation
+        // 4. Use the FILTERED gyro for compensation
+        // (Ensure you use your tuned scalars from the Slow Wave test)
+        gyroCompX = -gyro_roll_filtered  * gyro_scalar_x; 
+        gyroCompY =  gyro_pitch_filtered * gyro_scalar_y;
+
+        // 5. Calculate Clean Flow
         float flowX_clean = (float)flowData.deltaX - gyroCompX;
-        float flowY_clean = (float)flowData.deltaY - gyroCompY;
+        float flowY_clean = (float)flowData.deltaY + gyroCompY;
 
         // 3. Debug Output to Teleplot
         // We print "Clean" vs "Raw" to see if we improved it.

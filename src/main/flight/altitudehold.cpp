@@ -740,11 +740,28 @@ void checkReading() {
                 baro_ground_offset = (baro_ground_offset * 0.995f) + (current_offset * 0.005f);
             }
         }
+
+        // --- VARIABLE GAIN COMPLEMENTARY FILTER ---
+        // Calculate how far off our estimate is from the new measurement
+        float error_diff = abs(measurement - fused_alt_state);
+        
+        float dynamic_mix_factor;
+        
+        if (error_diff > 10.0f) {
+            // Large Error (e.g. fast climb): React aggressively!
+            // We trust the laser more to "catch up" quickly.
+            dynamic_mix_factor = 0.40f; 
+        } else {
+            // Small Error (Hovering): React slowly for smoothness.
+            // This filters out the +/- 1cm jitter from the sensor.
+            dynamic_mix_factor = 0.10f;
+        }
     
         // COMPLEMENTARY FILTER
         // New = (Prediction * 0.90) + (Measurement * 0.10)
         // Since 'predicted_alt' already includes Baro Trend, this effectively fuses both!
-        fused_alt_state = (predicted_alt * (1.0f - MIX_FACTOR)) + (measurement * MIX_FACTOR);
+        // Apply the filter with the chosen gain
+        fused_alt_state = (predicted_alt * (1.0f - dynamic_mix_factor)) + (measurement * dynamic_mix_factor);
 
     } else {
         // --- ZONE B: BARO ONLY ---
@@ -754,7 +771,7 @@ void checkReading() {
         
         // Blend it smoothly with previous state to avoid jumps
         // Trust prediction (history) heavily, nudge with Baro
-        fused_alt_state = (predicted_alt * 0.95f) + (virtual_baro_alt * 0.05f);
+        fused_alt_state = (predicted_alt * 0.70f) + (virtual_baro_alt * 0.30f);
     }
 
     // -------------------------------------------------------------

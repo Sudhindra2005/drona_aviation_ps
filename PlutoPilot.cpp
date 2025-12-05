@@ -16,12 +16,19 @@ extern int16_t debug_flow_x;
 extern int16_t debug_flow_y;
 extern int16_t debug_flow_squal;
 
-extern int16_t gyroADC[3];
+extern float gyroCompX;
+extern float gyroCompY;
+
 // Add Externs
 extern int16_t debug_raw_flow_x;
 extern int16_t debug_raw_flow_y;
 extern int16_t debug_gyro_roll;
 extern int16_t debug_gyro_pitch;
+
+extern int16_t only_imu_pos_X;
+extern int16_t only_imu_pos_Y;
+extern int16_t only_imu_vel_X;
+extern int16_t only_imu_vel_Y;
 
 // Add these lines at the top with your other externs
 // extern int32_t debug_checkReading_count;
@@ -70,14 +77,25 @@ unsigned long now = millis();
 //         Monitor_Println("FlowX:", debug_raw_flow_x);
 //         Monitor_Println("FlowY:", debug_raw_flow_y);
 
-//         Monitor_Println("gyro_PITCH:", gyroADC[PITCH]);
-//         Monitor_Println("gyro_ROLL:", gyroADC[ROLL]);
+//         Monitor_Println("gyro_PITCH:", (int16_t) gyroCompY);
+//         Monitor_Println("gyro_ROLL:", (int16_t) gyroCompX);
 //         Monitor_Println("SQUAL:", debug_flow_squal);
         
 //         // Verify Motion
 //         Monitor_Println("Cleaned_FlowX:", debug_flow_x);
 //         Monitor_Println("Cleaned_FlowY:", debug_flow_y);
 // }
+
+// if (now - lastPrintTime >= 100) {
+//         lastPrintTime = now;
+
+//         Monitor_Println("PosX:", only_imu_pos_X);
+//         Monitor_Println("PosY:", only_imu_pos_Y);
+        
+//         Monitor_Println("VelX:", only_imu_vel_X);
+//         Monitor_Println("VelY:", only_imu_vel_Y);
+// }
+
     // if (now - lastPrintTime >= 100) { // 10Hz Refresh Rate
     //     lastPrintTime = now;
 
